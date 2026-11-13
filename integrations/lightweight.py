@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -30,8 +31,32 @@ from .security import session_directory
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs" / "lightweight"
-FFMPEG = ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg"
-FFPROBE = ROOT / "tools" / "ffmpeg" / "bin" / "ffprobe"
+def _media_binary(name: str) -> Path:
+    """Find FFmpeg without hard-wiring this clone to one checkout layout.
+
+    A packaged binary remains preferred.  ``MOTRACK_FFMPEG`` can point to an
+    external FFmpeg directory or executable; the sibling legacy checkout is a
+    local-development fallback while a fresh clone can use PATH.
+    """
+    configured = os.getenv("MOTRACK_FFMPEG", "").strip()
+    candidates = [ROOT / "tools" / "ffmpeg" / "bin" / name]
+    if configured:
+        base = Path(configured).expanduser()
+        candidates.append(base / name if base.is_dir() else base)
+    candidates += [ROOT.parent / "tiqu1-otherball" / "tools" / "ffmpeg" / "bin" / name,
+                   ROOT.parent / "tiqu1" / "tools" / "ffmpeg" / "bin" / name]
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    found = shutil.which(name)
+    if found:
+        return Path(found)
+    # Keep a clear path in errors for installations that have not installed it.
+    return candidates[0]
+
+
+FFMPEG = _media_binary("ffmpeg")
+FFPROBE = _media_binary("ffprobe")
 TORCH_HOME = ROOT / ".cache" / "torch"
 LABELS_PATH = ROOT / ".cache" / "lightweight" / "kinetics_classnames.json"
 VIDEO_IDS: dict[str, Path] = {}
