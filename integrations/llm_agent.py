@@ -28,7 +28,7 @@ from .lightweight import (
     LightweightSession, duration_meta, normalize_edit_style, _json, _fingerprint,
 )
 
-VISION_CACHE = ROOT / "outputs" / "semantic_vision_live" / "basketball_events.json"
+VISION_CACHE = ROOT / "outputs" / "semantic_vision_live" / "tennis_events.json"
 KEY_FILE = ROOT / ".secrets" / "htadc_api_key"
 DEFAULT_MODEL = "deepseek-v4.1-flash"
 MAX_REQUESTS_PER_SESSION = 80
@@ -63,12 +63,12 @@ def vision_events(video_id: str) -> list[dict[str, Any]]:
             end = max(float(item.get("end_time", start)), start + 1.6)
         except (KeyError, TypeError, ValueError):
             continue
-        kind = item.get("event_type") if item.get("event_type") in EVENT_TYPE_ZH else "basketball_action_candidate"
+        kind = item.get("event_type") if item.get("event_type") in EVENT_TYPE_ZH else "tennis_action_candidate"
         out.append({
             "event_id": f"vision-{video_id}-{index + 1}",
             "source_video_id": video_id,
             "event_type": kind,
-            "display_name": EVENT_TYPE_ZH.get(kind, "篮球动作"),
+            "display_name": EVENT_TYPE_ZH.get(kind, "网球动作"),
             "start_time": round(start, 3),
             "end_time": round(end, 3),
             "raw_model_score": float(item.get("confidence", 0.5)),
@@ -86,7 +86,7 @@ class VisionAwareSession(LightweightSession):
         return super()._events() + vision_events(self.video_id)
 
 
-SYSTEM_PROMPT = """你是 MoTrack 的 AI 剪辑师，帮球迷把篮球视频剪成高光集锦。
+SYSTEM_PROMPT = """你是 MoTrack 的 AI 剪辑师，帮球迷把网球视频剪成高光集锦。
 
 说话方式：
 - 用自然、简短、热情的中文，像一位懂球的剪辑师，一般 1–3 句话。
@@ -95,37 +95,36 @@ SYSTEM_PROMPT = """你是 MoTrack 的 AI 剪辑师，帮球迷把篮球视频剪
 怎么做事：
 - 用户想生成或修改集锦时，调用 edit_highlight，只填这次要改的字段；之前去掉或保留的选择会自动沿用，不要重复填。
 - 常见说法："去掉第 2 段"→ remove_segments=[2]；"一定要有 1:17 那球"→ pin_moments 填那个时刻；"恢复原样"→ reset_choices=true；"只要后半段"→ start_after；"3 段就够"→ clip_count；"节奏快点"→ pace=tight；"加个慢动作"→ slow_motion=true；"来点燃的音乐"→ music=hype；"做出电影感"→ look=cinematic；"加点特效"→ zoom=true 并 transition=flash。
-- 需要确认画面内容时（“是不是真的扣篮”“哪一球最精彩”“去掉没看点的”），先调用 inspect_moments 看截图，再回答或剪辑；标了“AI看过”的不用再看。
+- 需要确认画面内容时（“是不是精彩回合”“哪一拍最精彩”“去掉没看点的”），先调用 inspect_moments 看截图，再回答或剪辑；标了“AI看过”的不用再看。
 - 一句话里有好几个要求时（“去掉第 2 段，节奏快点，最精彩的放最后”），一次 edit_highlight 把所有字段都填上，不要分几次剪。
 - 顺序：“最精彩的放最后/压轴”→ order=climax；“精彩的先放”→ order=best_first；“按时间顺序”→ order=time。
 - 改某段字幕：segment_captions={{"2":"压哨三分"}}。用户说“这段/那段”且消息开头写了“我点选了第 N 段”，就指第 N 段。
 - 用户说“撤销”“改回去”“还是刚才的好”→ 调用 undo_edit。
-- 问比赛表现、命中率、哪段时间最好、谁更热时，先调用 get_game_stats 拿数字再回答，不要凭印象。
+- 问比赛表现、哪段时间最值得回看时，先调用 get_game_stats 拿候选数据再回答，不要凭印象。
 - 剪完后用一句话说清改了什么、现在多长，再给一个具体的下一步建议。
 - 只是聊天、提问或让你解释时，直接回答，不要调用工具。
 - 配乐：内置 hype（热血电子）、groove（嘻哈律动）、chill（轻快）三首，用了内置配乐会自动卡点剪辑；用户上传过的音乐可以用 upload:xxxx。指定某首具体的歌（比如周杰伦的歌）做不到，请用户自己上传。
 - 特效：调色 look、推镜 zoom、闪白转场 transition=flash、片头标题 title。
-- 想要"进球集锦""只要进的"时，调用 edit_highlight 设 focus=made（只放检测到的进球）；想要所有出手用 focus=shots。
-- 被问"哪段时间投得最好""后半段表现怎么样""有没有连续得分"时，用下面"分时段"和"连续"的数字直接回答，带上原片时间。
+- 想要“发球集锦”时，调用 edit_highlight 设 focus=shots（发球/击球候选）；想要所有动作用 focus=all。
+- 本系统不判断比分、胜负、发球成功或回合结果；被问这些时明确说明需要回看原片和记分牌。
 - 做不到的（按球员或球队筛选、换背景、加贴纸）要坦白说明，并给出最接近的做法。
 
 事实边界：
-- 每个投篮时刻都带有自动检测的结果：进球、没进，或"看不出"（篮筐不在画面里）。
-- 被问"进了几个""命中率""投得怎么样"时，第一句直接报数：出手几次、进几个、没进几个、命中率，再列出进球的原片时间；最后用半句话说明还有几次看不出结果、原因是篮筐不在画面里。不要说"不敢说""只能确认"这类话，也不要去猜看不出的那些。
-- 比分、谁投的、哪支球队都识别不了，绝不编造。
+- 候选时刻来自动作与画面运动强度；它们不等于得分或获胜回合。
+- 比分、胜负、球员、发球是否成功和回合结果都不能识别，绝不编造。
 - 有画面描述的时刻可以引用描述，但要说"看起来"。
 - 集锦最长 60 秒，也不能超过原片长度。
 
 视频：{video_name}，原片 {duration} 秒。
-投篮统计（自动检测）：{shooting}
+候选复盘：{shooting}
 候选时刻（时间、动作、强度、描述）：
 {moments}
 
 当前集锦：
 {plan}"""
 
-COMMENTARY_PROMPT = """你是篮球集锦解说。根据下面的片段清单，写 2–3 句中文解说，介绍这段集锦的看点，语气有现场感。
-不要编造比分、球员、球队或是否进球；不确定的动作说"疑似"或"看起来"。不要提任何技术细节。"""
+COMMENTARY_PROMPT = """你是网球集锦解说。根据下面的片段清单，写 2–3 句中文解说，介绍这段集锦的看点，语气有现场感。
+不要编造比分、球员、胜负、发球成功或回合结果；不确定的动作说“疑似”或“看起来”。不要提任何技术细节。"""
 
 EDIT_TOOL = {
     "type": "function",
@@ -136,7 +135,7 @@ EDIT_TOOL = {
             "type": "object",
             "properties": {
                 "duration": {"type": "number", "description": "成片秒数，5–60"},
-                "focus": {"type": "string", "enum": ["made", "shots", "all"], "description": "made=只要检测到的进球，shots=只要投篮/扣篮，all=所有精彩动作"},
+                "focus": {"type": "string", "enum": ["shots", "all"], "description": "shots=发球/击球候选，all=所有网球动作候选"},
                 "clip_count": {"type": "integer", "description": "最多几段；0 表示自动"},
                 "remove_segments": {"type": "array", "items": {"type": "integer"}, "description": "从当前集锦去掉第几段（按当前编号，从 1 开始）"},
                 "remove_moments": {"type": "array", "items": {"type": "string"}, "description": "不要用的候选时刻 id，如 m08"},
@@ -166,12 +165,12 @@ EDIT_TOOL = {
 INSPECT_DIR = ROOT / "outputs" / "ai_inspect"
 INSPECT_BATCH = 4            # moments per contact sheet (one image per request)
 MAX_TOOL_ROUNDS = 5
-ACTIONS = ("扣篮", "投篮", "上篮", "盖帽", "抢断", "传球", "运球", "快攻", "庆祝", "观众", "回放", "广告", "其他")
-SHOT_ACTIONS = {"扣篮", "投篮", "上篮"}
+ACTIONS = ("发球", "正手击球", "反手击球", "网前截击", "底线回合", "庆祝", "观众", "回放", "广告", "其他")
+SHOT_ACTIONS = {"发球", "正手击球", "反手击球", "网前截击", "底线回合"}
 SKIP_ACTIONS = {"观众", "回放", "广告"}
-INSPECT_PROMPT = """你在审看篮球比赛视频的截图。图里每一行是一个候选时刻，左上角是它的编号（如 m07），同一行从左到右是这个时刻前、中、后三帧。
-只返回 JSON：{"moments":[{"id":"m07","action":"扣篮|投篮|上篮|盖帽|抢断|传球|运球|快攻|庆祝|观众|回放|广告|其他","highlight":1到5的整数,"note":"不超过 20 字的画面描述"}]}
-highlight：5=非常精彩的关键动作，3=普通进攻，1=没有看点。看不清就照实写，不要猜比分、球员姓名、球队或是否进球。"""
+INSPECT_PROMPT = """你在审看网球比赛视频的截图。图里每一行是一个候选时刻，左上角是它的编号（如 m07），同一行从左到右是这个时刻前、中、后三帧。
+只返回 JSON：{"moments":[{"id":"m07","action":"发球|正手击球|反手击球|网前截击|底线回合|庆祝|观众|回放|广告|其他","highlight":1到5的整数,"note":"不超过 20 字的画面描述"}]}
+highlight：5=动作清晰且值得回看，3=普通回合，1=没有看点。看不清就照实写，不要猜比分、球员姓名、胜负或回合结果。"""
 _inspect_lock = threading.Lock()
 
 
@@ -248,7 +247,7 @@ def _parse_inspection(text: str, allowed: set[str]) -> dict[str, dict[str, Any]]
             highlight = max(1, min(5, int(row.get("highlight", 3))))
         except (TypeError, ValueError):
             highlight = 3
-        out[str(row["id"])] = {"action": action, "highlight": highlight, "basketball": action not in SKIP_ACTIONS,
+        out[str(row["id"])] = {"action": action, "highlight": highlight, "tennis": action not in SKIP_ACTIONS,
                                "note": re.sub(r"\s+", " ", str(row.get("note", "")))[:40]}
     return out
 
@@ -256,7 +255,7 @@ def _parse_inspection(text: str, allowed: set[str]) -> dict[str, dict[str, Any]]
 def _review_label(review: dict[str, Any]) -> str:
     if review["action"] == "庆祝":
         return "庆祝时刻"
-    return "疑似" + review["action"] if review["action"] not in ("其他",) else "篮球动作"
+    return "疑似" + review["action"] if review["action"] not in ("其他",) else "网球动作"
 
 
 INSPECT_TOOL = {
@@ -343,25 +342,13 @@ class LLMEditor:
         return "强" if score >= 0.6 else "中" if score >= 0.35 else "弱"
 
     def _shooting_text(self) -> str:
-        from .shots import summary
-        s = summary(self.pool)
-        if not s["attempts"]:
-            return "这段视频没有检测到出手。"
-        made = [m for m in self.pool if m.get("outcome") == "made"]
-        text = f"出手 {s['attempts']} 次，进 {s['made']} 个，没进 {s['missed']} 个，看不出 {s['unknown']} 个"
-        if s["fg_pct"] is not None:
-            text += f"，能判断的命中率 {s['fg_pct']}%"
-        if made:
-            text += "；进球在原片 " + "、".join(_clock(float(m["start_time"])) for m in made)
-        text += "。"
+        from . import tennis_review
+        report = tennis_review.build(self.video_id, self.pool, float(self.session.video_duration or 0) or 1.0)
+        text = f"回看候选 {report['candidate_count']} 个。"
         try:
-            from . import review as review_mod
-            report = review_mod.build(self.video_id, self.pool, float(self.session.video_duration or 0) or 1.0)
-            busy = [p for p in report["periods"] if p["attempts"]]
+            busy = [p for p in report["periods"] if p["count"]]
             if busy:
-                text += "\n分时段：" + "；".join(f"{p['label']} 出手{p['attempts']} 进{p['made']} 没进{p['missed']}" for p in busy) + "。"
-            if report["streaks"]:
-                text += "\n连续：" + "；".join(x["text"] for x in report["streaks"]) + "。"
+                text += "\n重点时段：" + "；".join(f"{p['label']} {p['count']} 个候选" for p in busy) + "。"
         except Exception:  # the summary above is enough to answer
             pass
         return text
@@ -370,13 +357,11 @@ class LLMEditor:
         lines = []
         for item in self.pool:
             line = (f"{item['moment_id']} {_clock(item['start_time'])}–{_clock(item['end_time'])} "
-                    f"{item.get('display_name') or EVENT_TYPE_ZH.get(item['event_type'], '篮球动作')} {self._strength(item)}")
+                    f"{item.get('display_name') or EVENT_TYPE_ZH.get(item['event_type'], '网球动作')} {self._strength(item)}")
             if item.get("ai"):
                 review = item["ai"]
                 line += f" | AI看过：{review['action']}，精彩度 {review['highlight']}/5，{review['note']}"
-            if item.get("outcome"):
-                line += " | 检测：" + {"made": "进球", "missed": "没进"}.get(item["outcome"], "看不出进没进")
-            elif item.get("description"):
+            if item.get("description"):
                 line += f" | 画面：{item['description']}"
             lines.append(line)
         return "\n".join(lines) or "（没有识别到候选）"
@@ -510,13 +495,6 @@ class LLMEditor:
             return lo <= center <= hi and item["moment_id"] not in excluded
 
         candidates = [r for r in (self._apply_review(m) for m in self.pool if eligible(m)) if r]
-        if settings["focus"] == "made":
-            made = [m for m in candidates if m.get("outcome") == "made"]
-            if made:
-                candidates = made
-            else:
-                notes.append("这个范围里没检测到进球，已改用投篮镜头")
-                settings = {**settings, "focus": "shots"}
         if settings["focus"] == "shots":
             shots = [m for m in candidates if (m["ai"]["action"] in SHOT_ACTIONS if m.get("ai") else m["event_type"] in SHOT_LIKE_TYPES)]
             if shots:
@@ -610,7 +588,7 @@ class LLMEditor:
         review = item.get("ai")
         if not review:
             return item
-        if not review.get("basketball", True) or review.get("highlight", 3) <= 1:
+        if not review.get("tennis", True) or review.get("highlight", 3) <= 1:
             return None
         item = dict(item)
         item["final_ranking_score"] = 0.35 * float(item.get("raw_model_score", 0.0)) + 0.65 * (review["highlight"] / 5)
@@ -668,12 +646,11 @@ class LLMEditor:
         return response.choices[0].message
 
     def game_stats(self) -> dict[str, Any]:
-        from . import review as review_mod
-        report = review_mod.build(self.video_id, self.pool, float(self.session.video_duration or 0) or 1.0)
-        shots = [{"time": s["clock"], "kind": s["kind"], "result": s["outcome"]} for s in report["shots"]][:60]
-        return {"ok": True, "stats": report["stats"], "notes": report["notes"], "streaks": [x["text"] for x in report["streaks"]],
-                "periods": [{k: p[k] for k in ("label", "attempts", "made", "missed", "fg_pct")} for p in report["periods"]],
-                "shots": shots, "caveat": report["caveat"]}
+        from . import tennis_review
+        report = tennis_review.build(self.video_id, self.pool, float(self.session.video_duration or 0) or 1.0)
+        return {"ok": True, "candidate_count": report["candidate_count"], "notes": report["notes"],
+                "periods": [{k: p[k] for k in ("label", "count", "avg_score")} for p in report["periods"]],
+                "moments": report["moments"][:60], "caveat": report["caveat"]}
 
     def undo(self) -> dict[str, Any]:
         stack = getattr(self, "undo_stack", [])
@@ -741,7 +718,7 @@ class LLMEditor:
     def generate(self, duration: float, focus: str, edit_style: dict[str, Any] | None = None) -> dict[str, Any]:
         """The page's "生成" button: settings come from the form, the model writes commentary."""
         self.settings.update(include=[], exclude=[], clip_count=0, start_after=None, end_before=None)
-        args = {"duration": duration, "focus": focus if focus in ("made", "shots") else "all", **normalize_edit_style(edit_style)}
+        args = {"duration": duration, "focus": focus if focus == "shots" else "all", **normalize_edit_style(edit_style)}
         self._stage("AI_LOOKING")
         shortlist = sorted((m for m in self.pool if not m.get("ai") and (focus == "all" or m["event_type"] in SHOT_LIKE_TYPES)),
                            key=lambda m: float(m.get("raw_model_score", 0.0)), reverse=True)[:8]
@@ -770,7 +747,7 @@ class LLMEditor:
         except Exception:
             self.commentary = ""
         reply = self.commentary or self._template(result)
-        self.history += [{"role": "user", "content": f"生成 {duration:g} 秒{ {'made': '进球', 'shots': '投篮'}.get(focus, '精彩') }集锦"},
+        self.history += [{"role": "user", "content": f"生成 {duration:g} 秒{ {'shots': '发球/击球'}.get(focus, '精彩') }集锦"},
                          {"role": "assistant", "content": reply}]
         return self._result(reply, changed=True)
 

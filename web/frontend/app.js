@@ -418,7 +418,6 @@
   }
   function setMode(mode) {
     if (mode === state.mode || state.busy) return;
-    if (mode === 'ai') { toast('网球 AI 剪辑师正在适配中，请先使用基础剪辑'); return; }
     if (mode === 'ai' && !state.vip) { openVip(); return; }
     state.mode = mode;
     renderMode(); resetChat(); loadMoments();
@@ -439,8 +438,8 @@
       const r = await api('/api/v1/vip/activate', { code });
       store.set(r.token); state.vip = true;
       closeVip(); $('#vipCode').value = '';
-      state.mode = 'lightweight'; renderMode(); resetChat(); loadMoments();
-      toast('VIP 已开通；网球 AI 剪辑师正在适配中。');
+      state.mode = 'ai'; renderMode(); resetChat(); loadMoments();
+      toast('🎉 VIP 已开通，AI 网球剪辑师已就绪');
     } catch (e) { toast(e.message, true); }
     finally { $('#vipActivate').disabled = false; }
   }
@@ -452,7 +451,7 @@
   async function checkVip() {
     try { const r = await api('/api/v1/vip/status'); state.vip = !!r.vip; state.dev = !!r.dev; } catch (e) { return; }
     if (!state.vip && store.get()) store.set('');
-    state.mode = 'lightweight';
+    if (state.vip) state.mode = 'ai';
   }
   async function checkBackend() {
     try { if (((await api('/api/v1/health')).api || 0) < API_VERSION) $('#staleBanner').classList.remove('hidden'); }
@@ -543,11 +542,17 @@
     if (r.kind === 'tennis_review') {
       const moments = r.moments.map((m) => '<button class="rv-shot" type="button" data-t="' + m.time + '"><time>' + esc(m.clock) + '</time>' + esc(m.label) + '<b>回看</b></button>').join('');
       const periods = r.active_periods.map((p) => '<li><b>' + esc(p.label) + '</b> · ' + p.count + ' 个候选</li>').join('');
+      const best = (r.best || []).map((m) => '<button class="rv-best" type="button" data-t="' + m.time + '"><span class="info"><b>🏆 ' + esc(m.clock + ' ' + m.label) + '</b><small>' + esc(m.reason) + '</small></span></button>').join('');
+      const periodRows = (r.periods || []).filter((p) => p.count).map((p) => '<tr><td>' + esc(p.label) + '</td><td>' + p.count + '</td><td>' + (p.avg_score != null ? p.avg_score : '—') + '</td></tr>').join('');
+      const recap = r.recap ? '<div class="rv-recap">' + esc(r.recap) + '</div>' : '<div class="rv-recap"><p class="sub" style="margin:0 0 10px">AI 会基于候选时段写一段教练视角的网球复盘，不会编造比分或胜负。</p><button class="go vip" id="recapGo" type="button">👑 生成 AI 复盘</button></div>';
       $('#reviewBody').innerHTML = '<div class="rv-tiles"><div class="rv-tile"><b>' + r.candidate_count + '</b><span>回看候选</span></div><div class="rv-tile"><b>' + esc(clock(r.duration)) + '</b><span>视频时长</span></div></div>' +
+        (best ? '<section class="rv-bestbox"><div class="rv-besthead"><div><h4>🏆 优先回看</h4><p>按当前候选强度排序</p></div></div><div class="rv-bests">' + best + '</div></section>' : '') +
         '<div class="rv-h">重点时段</div><ul class="rv-notes">' + periods + '</ul>' +
         '<div class="rv-h">候选时间线 · 点一个点看原片</div><div class="rv-shots">' + moments + '</div>' +
         '<div class="rv-h">复盘建议</div><ul class="rv-notes">' + r.notes.map((n) => '<li>' + esc(n) + '</li>').join('') + '</ul>' +
-        '<div class="rv-foot"><p class="fine">' + esc(r.caveat) + '</p></div>';
+        '<div class="rv-h">AI 复盘 <i class="tag vip">VIP</i></div>' + recap +
+        (periodRows ? '<div class="rv-h">分时段候选</div><table class="rv-table"><tr><th>时段</th><th>候选</th><th>平均强度</th></tr>' + periodRows + '</table>' : '') +
+        '<div class="rv-foot"><p class="fine">' + esc(r.caveat) + '</p><a class="btn" href="/api/v1/videos/' + encodeURIComponent(r.video_id) + '/review/export" download>⬇ 导出复盘报告</a></div>';
       return;
     }
     const s = r.stats, dur = Math.max(1, r.duration);

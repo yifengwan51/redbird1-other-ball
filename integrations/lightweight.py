@@ -1996,20 +1996,20 @@ class LightweightSession:
                 )
 
             if intent.action == "recap":
-                from . import review as review_mod
+                from . import tennis_review as review_mod
                 report = review_mod.build(self.video_id, items, float(self.video_duration or 0) or max(
                     [float(x["end_time"]) for x in items] or [1.0]))
-                if report["stats"]["attempts"]:
-                    lines = list(report["notes"]) + [x["text"] for x in report["streaks"]]
-                    busy = [p for p in report["periods"] if p["attempts"]]
+                if report["candidate_count"]:
+                    lines = list(report["notes"])
+                    busy = [p for p in report["periods"] if p["count"]]
                     if len(busy) > 1:
                         lines.append("分时段：" + "；".join(
-                            f"{p['label']} 出手 {p['attempts']}、进 {p['made']}" for p in busy))
-                    summary = " ".join(lines) + " 点「📊 比赛复盘」可以看时间线和每一次出手。结果是自动识别的，可能有误。"
+                            f"{p['label']} 候选 {p['count']} 个" for p in busy))
+                    summary = " ".join(lines) + " 点「📊 网球复盘」可以看时间线和重点时段。结果是自动识别的，可能有误。"
                     recap = {"source_video_id": self.video_id, "verification_status": "MODEL_PREDICTED", "summary": summary,
-                             "stats": report["stats"], "periods": report["periods"], "streaks": report["streaks"]}
+                             "candidate_count": report["candidate_count"], "periods": report["periods"]}
                     self._trace("generate_recap", recap)
-                    return self._save(summary, {"recap": recap, "shooting": report["stats"]})
+                    return self._save(summary, {"recap": recap})
                 if self.plan and self.plan.get("clips"):
                     lines = []
                     for index, clip in enumerate(self.plan["clips"], 1):

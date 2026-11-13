@@ -126,7 +126,7 @@ def _session_id(payload:dict) -> str:
  except ValueError: raise HTTPException(400,'无效的会话')
 def norm_mode(value) -> str:
  mode=str(value or 'lightweight')
- if mode in ('ai','llm'): raise HTTPException(400,'网球 AI 剪辑师正在适配中，请先使用基础剪辑')
+ if mode in ('ai','llm'): return 'ai'
  if mode!='lightweight': raise HTTPException(400,'不支持的模式')
  return mode
 def require_vip(token:str|None) -> None:
@@ -193,10 +193,10 @@ def thumb(video:str, seconds:float, width:int, name:str) -> Path:
  return path
 
 @app.get('/api/v1/health')
-def health(): return {'status':'ok','api':API_VERSION,'modes':['lightweight'],'bind':'127.0.0.1'}
+def health(): return {'status':'ok','api':API_VERSION,'modes':['lightweight','ai'],'bind':'127.0.0.1'}
 @app.get('/api/v1/capabilities')
 def caps(x_vip_token:str|None=Header(default=None)):
- return {'lightweight':{'available':True},'ai':{'available':False,'reason':'网球版适配中','vip':False}}
+ return {'lightweight':{'available':True},'ai':{'available':True,'vip':vip.is_vip(x_vip_token)}}
 @app.get('/api/v1/vip/status')
 def vip_status(x_vip_token:str|None=Header(default=None)): return {'vip':vip.is_vip(x_vip_token),'dev':vip.dev_mode()}
 @app.post('/api/v1/vip/activate')
@@ -426,7 +426,7 @@ def make_recap(video_id:str, request:Request, x_vip_token:str|None=Header(defaul
  """VIP: the AI writes a short coach-style recap from the statistics only."""
  require_vip(x_vip_token)
  if video_id not in VIDEOS: raise HTTPException(404,'未知视频')
- from integrations import review
+ from integrations import tennis_review as review
  items=events(video_id,'lightweight','v1')
  if not items: raise HTTPException(409,'这段视频还没分析过，先点一次「开始剪辑」')
  report=review.build(video_id,items,video_duration(video_id))
@@ -453,7 +453,7 @@ def make_recap(video_id:str, request:Request, x_vip_token:str|None=Header(defaul
 @app.get('/api/v1/videos/{video_id}/review/export')
 def export_review(video_id:str):
  if video_id not in VIDEOS: raise HTTPException(404,'未知视频')
- from integrations import review
+ from integrations import tennis_review as review
  items=events(video_id,'lightweight','v1')
  if not items: raise HTTPException(409,'这段视频还没分析过，先点一次「开始剪辑」')
  report=review.build(video_id,items,video_duration(video_id))
