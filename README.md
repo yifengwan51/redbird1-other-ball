@@ -258,3 +258,13 @@ API 配置：
 - [轻量模型报告](docs/MOTRACK_LIGHTWEIGHT_AGENT_REPORT.md)
 - [Lightweight V2 质量审计](docs/MOTRACK_LIGHTWEIGHT_QUALITY_V2.md)
 - [Web 交互修复记录](docs/MOTRACK_LIGHTWEIGHT_WEB_FIX.md)
+## 项目内 FFmpeg
+
+网球版把视频渲染工具安装在本仓库的 `tools/ffmpeg/bin/ffmpeg`，不会依赖其他项目或修改系统环境。首次克隆后如该文件不存在，执行：
+
+```bash
+./scripts/install_ffmpeg_runtime.sh
+```
+
+随后再执行 `MOTRACK_PORT=8877 ./run_motrack_web.sh`。
+

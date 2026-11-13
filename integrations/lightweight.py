@@ -43,8 +43,6 @@ def _media_binary(name: str) -> Path:
     if configured:
         base = Path(configured).expanduser()
         candidates.append(base / name if base.is_dir() else base)
-    candidates += [ROOT.parent / "tiqu1-otherball" / "tools" / "ffmpeg" / "bin" / name,
-                   ROOT.parent / "tiqu1" / "tools" / "ffmpeg" / "bin" / name]
     for candidate in candidates:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
@@ -1001,9 +999,16 @@ def _filter_path(path: Path) -> str:
 
 
 def _probe_file(path: Path) -> dict[str, Any]:
-    return json.loads(subprocess.check_output(
-        [str(FFPROBE), "-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name",
-         "-of", "json", str(path)], text=True, timeout=30))
+    try:
+        return json.loads(subprocess.check_output(
+            [str(FFPROBE), "-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name",
+             "-of", "json", str(path)], text=True, timeout=30))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # The project-local imageio FFmpeg runtime ships the encoder binary but
+        # not ffprobe. OpenCV still provides the duration and stream shape we
+        # need for rendering, so a missing optional probe must not block edits.
+        info = _video_info(path)
+        return {"format": {"duration": str(info["duration"])}, "streams": info["streams"]}
 
 
 CANVAS = {"16:9": (1280, 720), "9:16": (720, 1280)}
