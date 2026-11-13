@@ -137,12 +137,18 @@ def use_ai(request:Request) -> None:
  except access.Denied as exc: raise HTTPException(403,{'code':exc.code,'message':exc.message})
 def video_duration(video:str) -> float:
  if video in _DURATIONS: return _DURATIONS[video]
+ path=ROOT/VIDEOS[video]['path']
  try:
-  raw=subprocess.check_output([str(PROBE),'-v','error','-show_entries','format=duration','-of','json',str(ROOT/VIDEOS[video]['path'])],text=True,timeout=30)
+  raw=subprocess.check_output([str(PROBE),'-v','error','-show_entries','format=duration','-of','json',str(path)],text=True,timeout=30)
   _DURATIONS[video]=float(json.loads(raw)['format']['duration'])
   return _DURATIONS[video]
  except Exception:
-  return 0.0
+  try:
+   import cv2
+   cap=cv2.VideoCapture(str(path)); fps=cap.get(cv2.CAP_PROP_FPS) or 30.0; frames=cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0; cap.release()
+   _DURATIONS[video]=frames/fps if fps>0 else 0.0
+   return _DURATIONS[video]
+  except Exception: return 0.0
 def event_score(event:dict) -> float:
  for key in ('confidence','final_ranking_score','raw_model_score','hypecut_score'):
   value=event.get(key)
@@ -173,6 +179,13 @@ def thumb(video:str, seconds:float, width:int, name:str) -> Path:
    try:
     subprocess.run([str(FF),'-y','-v','error','-ss',f'{seconds:.2f}','-i',str(ROOT/VIDEOS[video]['path']),
                     '-frames:v','1','-vf',f'scale={width}:-2','-q:v','4','-f','image2',str(part)],check=True,timeout=30)
+    os.replace(part,path)
+   except Exception:
+    import cv2
+    cap=cv2.VideoCapture(str(ROOT/VIDEOS[video]['path'])); cap.set(cv2.CAP_PROP_POS_MSEC,seconds*1000); ok,frame=cap.read(); cap.release()
+    if not ok: raise
+    h,w=frame.shape[:2]; frame=cv2.resize(frame,(width,max(1,round(h*width/w))))
+    if not cv2.imwrite(str(part),frame): raise RuntimeError('无法生成视频缩略图')
     os.replace(part,path)
    finally:
     part.unlink(missing_ok=True)
