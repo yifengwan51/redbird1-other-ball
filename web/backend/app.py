@@ -22,7 +22,10 @@ ROOT=Path(__file__).resolve().parents[2]; OUT=ROOT/'outputs'; FF=ROOT/'tools/ffm
 THUMBS=OUT/'web_thumbs'
 app=FastAPI(title='MoTrack'); jobs={}; lightweight_sessions={}; ai_sessions={}
 app.mount('/app',StaticFiles(directory=ROOT/'web/frontend'),name='app')
-BUILTIN={}  # Tennis launches with the user's own match video; basketball demos are intentionally hidden.
+BUILTIN={
+ 'djokovic':{'id':'djokovic','name':'Djokovic · US Open 2012','subtitle':'单打回合示例 · CC BY-SA 2.0','path':'inputs/tennis_djokovic_point.webm'},
+ 'davis-cup':{'id':'davis-cup','name':'Davis Cup · Uruguay vs Mexico','subtitle':'双打回合示例 · CC BY-SA 4.0','path':'inputs/tennis_davis_cup_doubles.webm'},
+}
 VIDEOS=dict(BUILTIN)  # built-ins + uploads that are ready to edit
 def refresh_videos() -> None:
  fresh=dict(BUILTIN)
@@ -205,7 +208,8 @@ def videos(request:Request):
 @app.get('/api/v1/videos/{video_id}/source')
 def video_source(video_id:str):
  if video_id not in VIDEOS: raise HTTPException(404,'未知视频')
- return FileResponse(safe(ROOT/VIDEOS[video_id]['path']),media_type='video/mp4')
+ path=safe(ROOT/VIDEOS[video_id]['path'])
+ return FileResponse(path,media_type='video/webm' if path.suffix.lower()=='.webm' else 'video/mp4')
 
 # ---------- uploads (chunked: the tunnel caps request bodies) ----------
 @app.post('/api/v1/uploads')

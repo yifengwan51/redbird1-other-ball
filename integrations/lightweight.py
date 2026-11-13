@@ -622,10 +622,22 @@ def _fingerprint(video: Path) -> str:
 
 
 def _video_info(video: Path) -> dict[str, Any]:
-    raw = subprocess.check_output([str(FFPROBE), "-v", "error", "-show_entries", "format=duration:stream=codec_type,r_frame_rate,width,height", "-of", "json", str(video)], text=True, timeout=30)
-    data = json.loads(raw)
-    duration = float(data["format"]["duration"])
-    return {"duration": duration, "streams": data.get("streams", []), "probe": data}
+    try:
+        raw = subprocess.check_output([str(FFPROBE), "-v", "error", "-show_entries", "format=duration:stream=codec_type,r_frame_rate,width,height", "-of", "json", str(video)], text=True, timeout=30)
+        data = json.loads(raw)
+        return {"duration": float(data["format"]["duration"]), "streams": data.get("streams", []), "probe": data}
+    except (OSError, subprocess.SubprocessError, KeyError, TypeError, ValueError):
+        cap = cv2.VideoCapture(str(video))
+        if not cap.isOpened():
+            raise RuntimeError(f"cannot inspect {video.name}")
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+        width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        duration = frames / fps if fps > 0 else 0.0
+        if duration <= 0:
+            raise RuntimeError(f"cannot determine duration for {video.name}")
+        return {"duration": duration, "streams": [{"codec_type": "video", "width": width, "height": height}], "probe": {"fallback": "opencv"}}
 
 
 class X3D:
@@ -710,6 +722,49 @@ def _frames(video: Path, start: float, duration: float = 1.6) -> tuple[list[np.n
     if len(frames) != 4:
         raise RuntimeError("insufficient decodable frames for X3D window")
     return frames, times
+
+
+def _motion_events(video_id: str, duration: float) -> list[dict[str, Any]]:
+    """Offline fallback: sustained court motion gives highlighter candidates, never point calls."""
+    cap = cv2.VideoCapture(str(VIDEO_IDS[video_id]))
+    if not cap.isOpened():
+        return []
+    samples: list[tuple[float, float]] = []
+    previous = None
+    last_t = -0.4
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        t = float(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
+        if t - last_t < 0.4:
+            continue
+        last_t = t
+        gray = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (160, 90))
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        if previous is not None:
+            samples.append((t, float(cv2.absdiff(gray, previous).mean())))
+        previous = gray
+    cap.release()
+    if not samples:
+        return []
+    values = np.array([value for _, value in samples])
+    threshold = max(float(np.percentile(values, 70)), float(np.median(values) * 1.2), 2.0)
+    events = []
+    for i, (t, score) in enumerate(samples):
+        left = samples[i - 1][1] if i else -1.0
+        right = samples[i + 1][1] if i + 1 < len(samples) else -1.0
+        if score < threshold or score < left or score < right:
+            continue
+        events.append({"event_id": f"motion-{video_id}-{round(t * 10):05d}", "source_video_id": video_id,
+            "video_path": str(VIDEO_IDS[video_id].relative_to(ROOT)), "event_type": "tennis_action_candidate",
+            "action_label": "court_motion", "action_label_zh": "精彩回合候选", "display_name": "精彩回合候选",
+            "start_time": round(max(0.0, t - 1.0), 3), "end_time": round(min(duration, t + 1.4), 3),
+            "raw_model_score": round(min(1.0, score / max(float(values.max()), 1.0)), 6), "motion_score": round(score, 4),
+            "score_kind": "court-motion heuristic; not a tennis action probability", "source_model": "OpenCV court-motion fallback",
+            "evidence_source": "LOCAL_MOTION", "verification_status": "MODEL_PREDICTED",
+            "semantic_limit": "Motion candidates do not verify a serve, point, score, player, winner, or rally outcome."})
+    return _merge(events)
 
 
 def _hype_segments(video_id: str) -> list[dict[str, Any]]:
@@ -829,7 +884,12 @@ def _analyze_locked(video_id: str, progress: Any = None) -> dict[str, Any]:
     OUT.mkdir(parents=True, exist_ok=True)
     info = _video_info(video)
     started = time.perf_counter()
-    runner = get_x3d()
+    runner = None
+    model_error = None
+    try:
+        runner = get_x3d()
+    except Exception as exc:
+        model_error = type(exc).__name__
     raw, failures = [], []
     windows = _windows(video_id, info["duration"])
     x3d_share = 100
@@ -837,15 +897,16 @@ def _analyze_locked(video_id: str, progress: Any = None) -> dict[str, Any]:
         if progress and number % 4 == 0:
             progress(round(100 * number / max(1, len(windows))), 100)
         try:
-            frames, times = _frames(video, start)
-            top = runner.classify(frames)
-            event = _event_from_window(video_id, start, times, top, sampling, segment)
-            if event:
-                raw.append(event)
+            if runner is not None:
+                frames, times = _frames(video, start)
+                top = runner.classify(frames)
+                event = _event_from_window(video_id, start, times, top, sampling, segment)
+                if event:
+                    raw.append(event)
         except Exception as exc:
             failures.append({"start_time": start, "error": type(exc).__name__})
     x3d_seconds = time.perf_counter() - started
-    events = _merge(raw)
+    events = _merge(raw) if runner is not None else _motion_events(video_id, info["duration"])
     try:
         from integrations import highlight
         highlight.score(events, highlight.loudness(video, FFMPEG))
@@ -858,9 +919,9 @@ def _analyze_locked(video_id: str, progress: Any = None) -> dict[str, Any]:
         "event_summary": {kind: sum(1 for event in events if event["event_type"] == kind) for kind in sorted({event["event_type"] for event in events})},
         "shooting": None,
         "roster": {"players": [], "teams": False},
-        "detector": {"available": False, "reason": "Basketball rim detector is disabled for tennis", "x3d_seconds": round(x3d_seconds, 3)},
+        "detector": {"available": runner is not None, "reason": "X3D unavailable; using court-motion candidates" if model_error else "Basketball rim detector is disabled for tennis", "model_error": model_error, "x3d_seconds": round(x3d_seconds, 3)},
         "hypecut_only_baseline": {"candidate_count": len(_hype_segments(video_id)), "segments": _hype_segments(video_id)},
-        "performance": {"device": str(runner.device), "model_load_seconds": runner.load_seconds, "gpu_memory_model_bytes": runner.memory_bytes,
+        "performance": {"device": str(runner.device) if runner is not None else "opencv", "model_load_seconds": runner.load_seconds if runner is not None else 0.0, "gpu_memory_model_bytes": runner.memory_bytes if runner is not None else 0,
                         "inference_total_seconds": round(elapsed, 3), "seconds_per_video_minute": round(elapsed / (info["duration"] / 60), 3),
                         "windows": len(_windows(video_id, info["duration"])), "raw_candidates": len(raw), "merged_candidates": len(events), "failures": failures},
         "limitations": "No human ground truth was used: Precision/Recall/F1 are UNVERIFIED.",
