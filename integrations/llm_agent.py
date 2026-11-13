@@ -277,7 +277,7 @@ STATS_TOOL = {
     "type": "function",
     "function": {
         "name": "get_game_stats",
-        "description": "取整场的投篮统计：出手、进球、命中率、分时段、连续命中/没进、每次出手的时间和结果。回答比赛表现类问题前先调用。",
+        "description": "取得整场的网球回看候选、重点时段与候选强度。回答比赛表现类问题前先调用。",
         "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
     },
 }
@@ -414,7 +414,7 @@ class LLMEditor:
                 settings["duration"] = max(5.0, min(60.0, float(args["duration"])))
             except (TypeError, ValueError):
                 notes.append("时长无效，保持原值")
-        if args.get("focus") in {"made", "shots", "all"}:
+        if args.get("focus") in {"shots", "all"}:
             settings["focus"] = args["focus"]
         if "clip_count" in args:
             try:
@@ -500,7 +500,7 @@ class LLMEditor:
             if shots:
                 candidates = shots
             elif candidates:
-                notes.append("这个范围里没有疑似投篮/扣篮，已改用所有精彩动作")
+                notes.append("这个范围里没有可用的发球/击球候选，已改用所有精彩动作")
         pinned = set(settings["include"])
         chosen = {m["moment_id"]: dict(m) for m in candidates}
         for moment_id in pinned:
@@ -671,7 +671,7 @@ class LLMEditor:
         if selected_segment and 1 <= selected_segment <= plays and text:
             text = f"（我在页面上点选了第 {selected_segment} 段）{text}"
         if not text:
-            return self._result("想怎么剪？比如“来个 20 秒的扣篮集锦”。", changed=False)
+            return self._result("想怎么剪？比如“来个 20 秒的网球集锦”。", changed=False)
         if edit_style is not None:
             self.session.edit_style = normalize_edit_style(edit_style)
         edited = False
@@ -782,7 +782,7 @@ class LLMEditor:
         from .edit_ops import suggestions
         return {"reply": reply, "session_id": self.session_id, "mode": "ai", "edit_style": dict(self.session.edit_style),
                 "output": output, "plan": plan, "commentary": self.commentary,
-                "suggestions": suggestions(plan, any(m.get("outcome") == "made" for m in self.pool), ai=True,
+                "suggestions": suggestions(plan, False, ai=True,
                                            can_undo=bool(getattr(self, "undo_stack", []))),
                 "can_undo": bool(getattr(self, "undo_stack", []))}
 
