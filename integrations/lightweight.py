@@ -709,6 +709,9 @@ def _frames(video: Path, start: float, duration: float = 1.6) -> tuple[list[np.n
     if not cap.isOpened():
         raise RuntimeError(f"cannot decode {video.name}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    # Some WebM containers report a timebase (for example 30000) as FPS.
+    if fps > 240:
+        fps = 30.0
     frames, times = [], []
     for offset in (0.0, duration / 3, duration * 2 / 3, duration):
         t = start + offset
@@ -731,6 +734,11 @@ def _motion_events(video_id: str, duration: float) -> list[dict[str, Any]]:
         return []
     samples: list[tuple[float, float]] = []
     previous = None
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    # Some WebM containers report a timebase (for example 30000) as FPS.
+    if fps > 240:
+        fps = 30.0
+    skip = max(1, round(fps * 0.4))
     last_t = -0.4
     while True:
         ok, frame = cap.read()
@@ -745,6 +753,9 @@ def _motion_events(video_id: str, duration: float) -> list[dict[str, Any]]:
         if previous is not None:
             samples.append((t, float(cv2.absdiff(gray, previous).mean())))
         previous = gray
+        for _ in range(skip - 1):
+            if not cap.grab():
+                break
     cap.release()
     if not samples:
         return []

@@ -11,6 +11,7 @@ inputs/**
 !inputs/.gitkeep
 !inputs/tennis_djokovic_point.webm
 !inputs/tennis_davis_cup_doubles.webm
+!inputs/tennis_kalinskaya_wimbledon_2019.webm
 
 # Project-local media tooling is reproducible from documented official sources;
 # do not publish large binaries or downloaded archives.

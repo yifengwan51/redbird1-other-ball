@@ -540,6 +540,16 @@
     }
   }
   function renderReview(r) {
+    if (r.kind === 'tennis_review') {
+      const moments = r.moments.map((m) => '<button class="rv-shot" type="button" data-t="' + m.time + '"><time>' + esc(m.clock) + '</time>' + esc(m.label) + '<b>回看</b></button>').join('');
+      const periods = r.active_periods.map((p) => '<li><b>' + esc(p.label) + '</b> · ' + p.count + ' 个候选</li>').join('');
+      $('#reviewBody').innerHTML = '<div class="rv-tiles"><div class="rv-tile"><b>' + r.candidate_count + '</b><span>回看候选</span></div><div class="rv-tile"><b>' + esc(clock(r.duration)) + '</b><span>视频时长</span></div></div>' +
+        '<div class="rv-h">重点时段</div><ul class="rv-notes">' + periods + '</ul>' +
+        '<div class="rv-h">候选时间线 · 点一个点看原片</div><div class="rv-shots">' + moments + '</div>' +
+        '<div class="rv-h">复盘建议</div><ul class="rv-notes">' + r.notes.map((n) => '<li>' + esc(n) + '</li>').join('') + '</ul>' +
+        '<div class="rv-foot"><p class="fine">' + esc(r.caveat) + '</p></div>';
+      return;
+    }
     const s = r.stats, dur = Math.max(1, r.duration);
     const tile = (v, k, cls) => '<div class="rv-tile ' + (cls || '') + '"><b>' + esc(String(v)) + '</b><span>' + k + '</span></div>';
     const dots = r.shots.map((x) => '<button class="rv-dot ' + x.outcome + '" type="button" data-t="' + x.time + '" style="left:calc(10px + (100% - 20px) * ' +

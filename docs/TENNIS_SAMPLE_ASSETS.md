@@ -6,5 +6,6 @@
 | --- | --- | --- | --- |
 | `inputs/tennis_djokovic_point.webm` | 2012 US Open 单打回合，约 20 秒 | JC，Wikimedia Commons：[2012 US Open Djokovic point](https://commons.wikimedia.org/wiki/File:2012_US_Open_Djokovic_point.webm) | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0/) |
 | `inputs/tennis_davis_cup_doubles.webm` | 2018 Davis Cup Uruguay vs Mexico 双打回合，约 7 秒 | NaBUru38，Wikimedia Commons：[Davis Cup Americas Zone](https://commons.wikimedia.org/wiki/File:2018_Davis_Cup_Americas_Zone_-_Uruguay_vs_Mexico_-_04.webm) | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| `inputs/tennis_kalinskaya_wimbledon_2019.webm` | Anna Kalinskaya 2019 Wimbledon 资格赛，约 3 分 37 秒 | John Lees Edmondson，Wikimedia Commons：[Anna Kalinskaya Wimbledon Qualifying 2019](https://commons.wikimedia.org/wiki/File:Anna_Kalinskaya_Wimbledon_Qualifying_2019.webm) | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
 
 两个文件均来自对应作者在 Wikimedia Commons 发布的原始 WebM 文件；未改变视频内容。

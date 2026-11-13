@@ -25,6 +25,7 @@ app.mount('/app',StaticFiles(directory=ROOT/'web/frontend'),name='app')
 BUILTIN={
  'djokovic':{'id':'djokovic','name':'Djokovic · US Open 2012','subtitle':'单打回合示例 · CC BY-SA 2.0','path':'inputs/tennis_djokovic_point.webm'},
  'davis-cup':{'id':'davis-cup','name':'Davis Cup · Uruguay vs Mexico','subtitle':'双打回合示例 · CC BY-SA 4.0','path':'inputs/tennis_davis_cup_doubles.webm'},
+ 'kalinskaya':{'id':'kalinskaya','name':'Anna Kalinskaya · Wimbledon 2019','subtitle':'3 分 37 秒资格赛示例 · CC BY-SA 4.0','path':'inputs/tennis_kalinskaya_wimbledon_2019.webm'},
 }
 VIDEOS=dict(BUILTIN)  # built-ins + uploads that are ready to edit
 def refresh_videos() -> None:
@@ -364,14 +365,12 @@ def get_events(video_id:str,mode:str='lightweight',variant:str='v1'):
  return {'events':items,'mode':mode,'shooting':None}
 @app.get('/api/v1/videos/{video_id}/review')
 def get_review(video_id:str):
- """复盘: timeline, per-period shooting and streaks, from the cached analysis."""
+ """网球复盘：候选时间线与回看建议，不推断比分或胜负。"""
  if video_id not in VIDEOS: raise HTTPException(404,'未知视频')
- from integrations import review
+ from integrations import tennis_review
  items=events(video_id,'lightweight','v1')
  if not items: raise HTTPException(409,'这段视频还没分析过，先点一次「开始剪辑」')
- report=review.build(video_id,items,video_duration(video_id))
- report['recap']=_cached_recap(video_id,review.recap_input(report))
- return report
+ return tennis_review.build(video_id,items,video_duration(video_id))
 @app.post('/api/v1/videos/{video_id}/review/correct')
 def correct_shot(video_id:str, request:Request, payload:dict):
  """Admin-only label fix for evaluation (null = back to the detector's call). Not shown to users."""
