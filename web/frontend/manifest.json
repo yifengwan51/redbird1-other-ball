@@ -1,7 +1,7 @@
 {
-  "name": "MoTrack 篮球集锦",
+  "name": "MoTrack 网球集锦",
   "short_name": "MoTrack",
-  "description": "一键把篮球比赛剪成高光集锦",
+  "description": "一键把网球比赛剪成高光集锦",
   "id": "/app/index.html",
   "start_url": "/app/index.html",
   "scope": "/app/",

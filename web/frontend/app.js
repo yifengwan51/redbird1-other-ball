@@ -17,7 +17,7 @@
       style: { pace: 'standard', transition: 'fade', look: 'retro', zoom: false, music: 'groove', slow_motion: false } },
     { id: 'bw', cls: 'p-bw', emo: '🖤', name: '黑白经典', desc: '黑白·舒缓·推镜',
       style: { pace: 'relaxed', transition: 'fade', look: 'bw', zoom: true, music: 'chill', slow_motion: true } },
-    { id: 'raw', cls: 'p-raw', emo: '🏀', name: '原汁原味', desc: '保留现场声·不加特效',
+    { id: 'raw', cls: 'p-raw', emo: '🎾', name: '原汁原味', desc: '保留现场声·不加特效',
       style: { pace: 'standard', transition: 'fade', look: 'vivid', zoom: false, music: 'none', slow_motion: false } }
   ];
   // Progress steps shown on the player while a job runs; stage -> step index.
@@ -34,7 +34,7 @@
   };
   const SUGGEST = {
     lightweight: ['缩短到 10 秒', '换一首', '改成竖屏', '只保留 3 段', '做成电影感', '加特效'],
-    ai: ['把没看点的镜头去掉', '最精彩的是哪一球？', '只要后半段', '改成竖屏，节奏快一点', '换成复古，配乐换嘻哈', '标题改成“街球之夜”']
+    ai: ['把没看点的镜头去掉', '最精彩的是哪一拍？', '只要后半段', '改成竖屏，节奏快一点', '换成复古，配乐换嘻哈', '标题改成“球场之夜”']
   };
 
   const state = { videos: [], video: null, mode: 'lightweight', vip: false, dev: false, duration: 20,
@@ -418,6 +418,7 @@
   }
   function setMode(mode) {
     if (mode === state.mode || state.busy) return;
+    if (mode === 'ai') { toast('网球 AI 剪辑师正在适配中，请先使用基础剪辑'); return; }
     if (mode === 'ai' && !state.vip) { openVip(); return; }
     state.mode = mode;
     renderMode(); resetChat(); loadMoments();
@@ -438,8 +439,8 @@
       const r = await api('/api/v1/vip/activate', { code });
       store.set(r.token); state.vip = true;
       closeVip(); $('#vipCode').value = '';
-      state.mode = 'ai'; renderMode(); resetChat(); loadMoments();
-      toast('🎉 VIP 已开通，AI 剪辑师为你服务');
+      state.mode = 'lightweight'; renderMode(); resetChat(); loadMoments();
+      toast('VIP 已开通；网球 AI 剪辑师正在适配中。');
     } catch (e) { toast(e.message, true); }
     finally { $('#vipActivate').disabled = false; }
   }
@@ -451,7 +452,7 @@
   async function checkVip() {
     try { const r = await api('/api/v1/vip/status'); state.vip = !!r.vip; state.dev = !!r.dev; } catch (e) { return; }
     if (!state.vip && store.get()) store.set('');
-    if (state.vip) state.mode = 'ai';
+    state.mode = 'lightweight';
   }
   async function checkBackend() {
     try { if (((await api('/api/v1/health')).api || 0) < API_VERSION) $('#staleBanner').classList.remove('hidden'); }
@@ -483,7 +484,7 @@
     return e.ai ? 0.35 * raw + 0.65 * (e.ai.highlight / 5) : raw;
   }
   function renderMoments() {
-    const pool = state.events.filter((e) => !(e.ai && e.ai.basketball === false));
+    const pool = state.events.filter((e) => !(e.ai && e.ai.tennis === false));
     const top = pool.slice().sort((a, b) => momentScore(b) - momentScore(a)).slice(0, 10)
       .sort((a, b) => Number(a.start_time) - Number(b.start_time));
     const reviewed = state.events.filter((e) => e.ai).length;
@@ -680,7 +681,7 @@
       { el: '#videos', pane: 'edit', title: '先选一场比赛', text: '点一段示例比赛就能直接试。想剪自己的比赛，点「＋ 上传视频」，从手机相册或电脑里选。' },
       { el: '#presets', pane: 'edit', title: '选风格和时长', text: '一个风格同时决定配乐、转场和调色。下面再选集锦要多长，竖屏适合发抖音、视频号。' },
       { el: '#go', pane: 'edit', title: '点「开始剪辑」', text: '基础剪辑几秒出片，全程免费。' + ai },
-      { el: '.moments-card', title: '看进球和复盘', text: '这里列出每次出手，绿色「进球」标签是进了的球，点一下跳到原片。右上角「📊 比赛复盘」看命中率、出手时间线，还能导出报告发给教练。' },
+      { el: '.moments-card', title: '查看精彩瞬间', text: '这里列出自动识别到的发球、击球和精彩镜头；点一下可以跳到原片查看。' },
       { el: () => (getComputedStyle($('.tabs')).display !== 'none' ? $('.tabs [data-pane=chat]') : $('#pane-chat')), title: '一句话修改',
         text: '剪好后在「对话」里直接说，比如“去掉第 2 段”“改成竖屏”“节奏快一点”。随时点右上角「?」可以再看这份指南。' }
     ];
@@ -814,7 +815,7 @@
     if (PRESETS.some((x) => x.id === p.preset)) applyPreset(p.preset);
     if (DURATIONS.includes(p.duration)) state.duration = p.duration;
     if (['16:9', '9:16'].includes(p.aspect)) setSeg('aspect', p.aspect);
-    if (['made', 'shots', 'all'].includes(p.focus)) setSeg('focus', p.focus);
+    if (['serve', 'rally', 'all'].includes(p.focus)) setSeg('focus', p.focus);
   }
   async function generate() {
     if (state.busy || !state.video) return;
@@ -824,7 +825,7 @@
       const shots = segValue('focus') !== 'all';
       const submitted = await api('/api/v1/highlights', {
         video_id: state.video.id, mode: state.mode, target_duration: state.duration,
-        event_types: segValue('focus') === 'made' ? ['shot_attempt', 'made_basket'] : shots ? ['shot_attempt'] : ['basketball_action_candidate', 'dunk', 'dribble'],
+        event_types: segValue('focus') === 'serve' ? ['serve', 'tennis_hit'] : shots ? ['tennis_hit'] : ['tennis_action_candidate'],
         edit_style: editStyle()
       });
       const job = await pollJob(submitted.id);
@@ -869,7 +870,7 @@
     state.sessionId = ''; selectSegment(null); renderSuggest();
     $('#log').innerHTML = '';
     addMsg('agent', state.mode === 'ai'
-      ? '嗨，我是你的 AI 剪辑师 👑 我会先看画面再挑镜头。\n先点“开始剪辑”，或者直接告诉我想要什么，比如“来个 20 秒竖屏扣篮集锦”。'
+      ? '嗨，我是你的 AI 剪辑师 👑 我会先看画面再挑镜头。\n先点“开始剪辑”，或者直接告诉我想要什么，比如“来个 20 秒竖屏网球集锦”。'
       : '你好！先选个风格点“开始剪辑”，剪完可以在这里继续改，比如“缩短到 10 秒”“换一首”“改成竖屏”。');
   }
   async function send(preset) {
@@ -1111,7 +1112,7 @@
     const b = e.target.closest('.moment'); if (!b) return;
     seekSource(b.dataset.t);
   });
-  $('#reviewBtn').addEventListener('click', openReview);
+  const reviewBtn = $('#reviewBtn'); if (reviewBtn) reviewBtn.addEventListener('click', openReview);
   $('#reviewClose').addEventListener('click', () => $('#reviewDialog').classList.add('hidden'));
   $('#reviewDialog').addEventListener('click', (e) => {
     if (e.target.id === 'reviewDialog') { $('#reviewDialog').classList.add('hidden'); return; }

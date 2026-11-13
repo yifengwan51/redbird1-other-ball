@@ -22,8 +22,7 @@ ROOT=Path(__file__).resolve().parents[2]; OUT=ROOT/'outputs'; FF=ROOT/'tools/ffm
 THUMBS=OUT/'web_thumbs'
 app=FastAPI(title='MoTrack'); jobs={}; lightweight_sessions={}; ai_sessions={}
 app.mount('/app',StaticFiles(directory=ROOT/'web/frontend'),name='app')
-BUILTIN={'cbf':{'id':'cbf','name':'ČBF 3x3 Tour','subtitle':'3x3 街头篮球巡回赛','path':'inputs/cbf_3x3_tour.mp4'},
-         'doug':{'id':'doug','name':'Doug McDermott','subtitle':'球员精彩镜头','path':'inputs/doug_mcdermott.mp4'}}
+BUILTIN={}  # Tennis launches with the user's own match video; basketball demos are intentionally hidden.
 VIDEOS=dict(BUILTIN)  # built-ins + uploads that are ready to edit
 def refresh_videos() -> None:
  fresh=dict(BUILTIN)
@@ -31,6 +30,9 @@ def refresh_videos() -> None:
   if m.get('status')=='ready' and uploads.video_path(m['id']).is_file():
    fresh[m['id']]={'id':m['id'],'name':m['title'],'subtitle':'我上传的视频','path':str(uploads.video_path(m['id']).relative_to(ROOT)),'upload':True}
  VIDEOS.clear(); VIDEOS.update(fresh)
+ from integrations import lightweight
+ lightweight.VIDEO_IDS.clear()
+ lightweight.VIDEO_IDS.update({key: ROOT / value['path'] for key,value in VIDEOS.items()})
  for k in [k for k in _DURATIONS if k not in VIDEOS]: _DURATIONS.pop(k,None)
 uploads.on_ready.append(refresh_videos)
 MAX_JOBS=200
@@ -120,7 +122,7 @@ def _session_id(payload:dict) -> str:
  except ValueError: raise HTTPException(400,'无效的会话')
 def norm_mode(value) -> str:
  mode=str(value or 'lightweight')
- if mode in ('ai','llm'): return 'ai'
+ if mode in ('ai','llm'): raise HTTPException(400,'网球 AI 剪辑师正在适配中，请先使用基础剪辑')
  if mode!='lightweight': raise HTTPException(400,'不支持的模式')
  return mode
 def require_vip(token:str|None) -> None:
@@ -174,10 +176,10 @@ def thumb(video:str, seconds:float, width:int, name:str) -> Path:
  return path
 
 @app.get('/api/v1/health')
-def health(): return {'status':'ok','api':API_VERSION,'modes':['lightweight','ai'],'bind':'127.0.0.1'}
+def health(): return {'status':'ok','api':API_VERSION,'modes':['lightweight'],'bind':'127.0.0.1'}
 @app.get('/api/v1/capabilities')
 def caps(x_vip_token:str|None=Header(default=None)):
- return {'lightweight':{'available':True},'ai':{'available':True,'vip':vip.is_vip(x_vip_token)}}
+ return {'lightweight':{'available':True},'ai':{'available':False,'reason':'网球版适配中','vip':False}}
 @app.get('/api/v1/vip/status')
 def vip_status(x_vip_token:str|None=Header(default=None)): return {'vip':vip.is_vip(x_vip_token),'dev':vip.dev_mode()}
 @app.post('/api/v1/vip/activate')
@@ -342,9 +344,7 @@ def get_events(video_id:str,mode:str='lightweight',variant:str='v1'):
  mode=norm_mode(mode)
  if variant not in VARIANTS: raise HTTPException(400,'不支持的候选版本')
  items=events(video_id,mode,variant)
- from integrations.shots import summary
- shooting=summary(items) if any(e.get('evidence_source')=='LOCAL_DETECTOR' for e in items) else None
- return {'events':items,'mode':mode,'shooting':shooting}
+ return {'events':items,'mode':mode,'shooting':None}
 @app.get('/api/v1/videos/{video_id}/review')
 def get_review(video_id:str):
  """复盘: timeline, per-period shooting and streaks, from the cached analysis."""
@@ -510,7 +510,7 @@ def ai_editor(video_id:str, sid:str):
 
 @app.post('/api/v1/highlights')
 def highlights(payload:dict, request:Request, x_vip_token:str|None=Header(default=None)):
- vid=payload.get('video_id','cbf'); types=payload.get('event_types',['shot_attempt'])
+ vid=payload.get('video_id'); types=payload.get('event_types',['tennis_action_candidate'])
  try: duration=float(payload.get('target_duration',15))
  except (TypeError,ValueError): raise HTTPException(400,'目标时长无效')
  mode=norm_mode(payload.get('mode'))
@@ -521,8 +521,8 @@ def highlights(payload:dict, request:Request, x_vip_token:str|None=Header(defaul
   raise HTTPException(409 if meta else 404,'视频还在处理中，稍等一下' if meta and meta.get('status')!='failed' else '未知视频')
  if not 5<=duration<=60 or not isinstance(types,list): raise HTTPException(400,'时长需在 5–60 秒之间')
  if variant not in VARIANTS: raise HTTPException(400,'不支持的候选版本')
- made='made_basket' in types
- shots='shot_attempt' in types or made
+ serves='serve' in types
+ tennis='tennis_hit' in types or serves
  if mode=='ai':
   require_vip(x_vip_token); use_ai(request)
   jid='ai-'+uuid.uuid4().hex[:12]
@@ -534,7 +534,7 @@ def highlights(payload:dict, request:Request, x_vip_token:str|None=Header(defaul
      editor=ai_editor(vid,jid)
      editor.session.progress=lambda done,total: job.update(stage='ANALYZING',progress=round(100*done/max(1,total)))
      editor.session.stage_hook=lambda name: job.update(stage=name)
-     result=editor.generate(duration,'made' if made else 'shots' if shots else 'all',style)
+     result=editor.generate(duration,'shots' if tennis else 'all',style)
      editor.session.stage_hook=None  # later chat turns have no job to report to
     job.update(status='completed',stage='OUTPUT_VERIFIED',result=result,progress=100)
    except Exception as exc:
@@ -544,7 +544,7 @@ def highlights(payload:dict, request:Request, x_vip_token:str|None=Header(defaul
  from integrations.lightweight import LightweightSession
  jid='lw-'+uuid.uuid4().hex[:12]
  session=LightweightSession(video_id=vid,session_id=jid,candidate_version=variant); lightweight_sessions[jid]=session
- prompt=('生成进球集锦 ' if (made and variant!='hypecut') else '生成投篮高光 ' if (shots and variant!='hypecut') else '生成篮球高光 ')+f'{duration:g}秒'
+ prompt=('生成发球与击球集锦 ' if (tennis and variant!='hypecut') else '生成网球高光 ')+f'{duration:g}秒'
  job=remember_job(jid,{'id':jid,'mode':'lightweight','candidate_version':variant,'status':'queued','stage':'QUEUED','session_id':jid,'video_id':vid,'prompt':prompt})
  session.progress=lambda done,total: job.update(stage='ANALYZING',progress=round(100*done/max(1,total)))
  session.stage_hook=lambda name: job.update(stage=name)
@@ -584,7 +584,7 @@ def chat(payload:dict, request:Request, x_vip_token:str|None=Header(default=None
  if not text: raise HTTPException(400,'消息不能为空')
  if len(text)>500: raise HTTPException(400,'消息太长了，请精简到 500 字以内')
  mode=norm_mode(payload.get('mode'))
- video_id=str(payload.get('video_id','cbf'))
+ video_id=str(payload.get('video_id',''))
  variant=str(payload.get('candidate_version','v1'))
  if video_id not in VIDEOS: raise HTTPException(404,'未知视频')
  sid=_session_id(payload)

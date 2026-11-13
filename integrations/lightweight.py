@@ -1,7 +1,7 @@
 """Local X3D candidate analysis and a deterministic, no-network MoTrack agent.
 
 This module deliberately treats Kinetics-400 labels as *action evidence*, not as
-ground truth for basketball outcomes.  It is an extension of HypeCut's existing
+ground truth for tennis outcomes.  It is an extension of HypeCut's existing
 signals: low-rate whole-video windows prevent HypeCut-only blind spots, while
 dense windows around HypeCut segments add temporal evidence where it matters.
 """
@@ -27,7 +27,6 @@ import numpy as np
 import torch
 
 from .security import session_directory
-from . import shots
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs" / "lightweight"
@@ -35,39 +34,21 @@ FFMPEG = ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg"
 FFPROBE = ROOT / "tools" / "ffmpeg" / "bin" / "ffprobe"
 TORCH_HOME = ROOT / ".cache" / "torch"
 LABELS_PATH = ROOT / ".cache" / "lightweight" / "kinetics_classnames.json"
-VIDEO_IDS = {
-    "cbf": ROOT / "inputs" / "cbf_3x3_tour.mp4",
-    "doug": ROOT / "inputs" / "doug_mcdermott.mp4",
-}
-HYPECUT = {
-    "cbf": ROOT / "outputs" / "real" / "cbf" / "default.json",
-    "doug": ROOT / "outputs" / "real" / "doug" / "default.json",
-}
-HYPECUT_FALLBACK_DIRS = {
-    "cbf": ROOT / "outputs" / "real" / "cbf",
-    "doug": ROOT / "outputs" / "real" / "doug",
-}
-EVENT_TYPES = {"shot_attempt", "made_basket", "missed_shot", "pass", "rebound", "steal", "fast_break", "UNKNOWN", "basketball_action_candidate", "dunk", "dribble"}
-ALIASES = {"shot": "shot_attempt", "shoot": "shot_attempt", "投篮": "shot_attempt", "出手": "shot_attempt", "命中": "made_basket", "得分": "made_basket", "扣篮": "dunk", "灌篮": "dunk"}
-ANALYSIS_VERSION = "3.6"  # 3.6: made shots ranked by crowd noise, range, streak, kind. 3.5: players numbered, shots attributed. 3.4: 3.4: shot evidence + "needs a look" flag (calls unchanged). 3.3: 3.3: stricter ball-in-basket only; drop check off (it flipped real makes)
-SHOT_LIKE_TYPES = {"shot_attempt", "dunk"}
-BASKETBALL_LABELS = {
-    "dunking basketball": ("dunk", "扣篮动作"),
-    "shooting basketball": ("shot_attempt", "投篮动作"),
-    "dribbling basketball": ("dribble", "运球动作"),
-    "playing basketball": ("basketball_action_candidate", "篮球动作"),
+VIDEO_IDS: dict[str, Path] = {}
+HYPECUT: dict[str, Path] = {}
+HYPECUT_FALLBACK_DIRS: dict[str, Path] = {}
+EVENT_TYPES = {"serve", "tennis_hit", "tennis_action_candidate", "UNKNOWN"}
+ALIASES = {"发球": "serve", "serve": "serve", "击球": "tennis_hit", "回合": "tennis_hit", "tennis": "tennis_action_candidate"}
+ANALYSIS_VERSION = "4.0"  # Tennis-only Kinetics action evidence; no score or point outcome inference.
+SHOT_LIKE_TYPES = {"serve", "tennis_hit"}
+TENNIS_LABELS = {
+    "tennis serve": ("serve", "疑似发球"),
+    "playing tennis": ("tennis_action_candidate", "网球动作"),
 }
 EVENT_TYPE_ZH = {
-    "shot_attempt": "疑似投篮",
-    "dunk": "疑似扣篮",
-    "dribble": "运球动作",
-    "basketball_action_candidate": "篮球动作",
-    "made_basket": "疑似得分",
-    "missed_shot": "疑似未进",
-    "pass": "传球",
-    "rebound": "篮板",
-    "steal": "抢断",
-    "fast_break": "快攻",
+    "serve": "疑似发球",
+    "tennis_hit": "疑似击球",
+    "tennis_action_candidate": "网球动作",
     "hypecut_candidate": "HypeCut 信号片段",
     "UNKNOWN": "未知动作",
 }
@@ -553,7 +534,7 @@ def build_montage(
                 "replay": True,
                 "anchor_event_id": anchor.get("event_id"),
                 "label": "慢放回看 · " + (anchor.get("display_name") or EVENT_TYPE_ZH.get(anchor.get("event_type", ""), "精彩动作")),
-                "event_type": anchor.get("event_type", "basketball_action_candidate"),
+                "event_type": anchor.get("event_type", "tennis_action_candidate"),
                 "raw_model_score": _score_of(anchor),
             }
             replay_output = float(replay["output_duration"])
@@ -589,9 +570,9 @@ def build_montage(
             "event_center": round(_center_of(item), 3),
             "speed": 1.0,
             "replay": False,
-            "event_type": item.get("event_type", "basketball_action_candidate"),
-            "label": item.get("display_name") or EVENT_TYPE_ZH.get(item.get("event_type", ""), "篮球动作"),
-            "display_name": item.get("display_name") or EVENT_TYPE_ZH.get(item.get("event_type", ""), "篮球动作"),
+            "event_type": item.get("event_type", "tennis_action_candidate"),
+            "label": item.get("display_name") or EVENT_TYPE_ZH.get(item.get("event_type", ""), "网球动作"),
+            "display_name": item.get("display_name") or EVENT_TYPE_ZH.get(item.get("event_type", ""), "网球动作"),
             "action_label_zh": item.get("action_label_zh"),
             "outcome": item.get("outcome"),
             "raw_model_score": _score_of(item),
@@ -776,17 +757,13 @@ def _windows(video_id: str, duration: float) -> list[tuple[float, str, dict[str,
 
 
 def _event_from_window(video_id: str, start: float, times: list[float], top: list[dict[str, Any]], source: str, segment: dict[str, Any] | None) -> dict[str, Any] | None:
-    # Rank only the four Kinetics basketball classes.  The previous version
-    # always ranked a low-confidence "shooting basketball" score even when the
-    # strongest basketball evidence was a dunk, which made the highlight
-    # ranking look almost random.  The chosen class is still model evidence,
-    # never a made/missed-basket conclusion.
-    basketball = [x for x in top if x["label"] in BASKETBALL_LABELS]
-    if not basketball:
+    """Turn Kinetics tennis labels into highlighter candidates, never point calls."""
+    tennis = [x for x in top if x["label"] in TENNIS_LABELS]
+    if not tennis:
         return None
-    primary = max(basketball, key=lambda x: float(x["raw_model_score"]))
-    event_type, label_zh = BASKETBALL_LABELS[primary["label"]]
-    signals = {x["label"]: round(float(x["raw_model_score"]), 6) for x in basketball}
+    primary = max(tennis, key=lambda x: float(x["raw_model_score"]))
+    event_type, label_zh = TENNIS_LABELS[primary["label"]]
+    signals = {x["label"]: round(float(x["raw_model_score"]), 6) for x in tennis}
     return {
         "event_id": f"lw-{video_id}-{round(start * 10):05d}",
         "source_video_id": video_id,
@@ -798,15 +775,15 @@ def _event_from_window(video_id: str, start: float, times: list[float], top: lis
         "start_time": round(times[0], 3),
         "end_time": round(times[-1], 3),
         "raw_model_score": primary["raw_model_score"],
-        "basketball_signals": signals,
-        "score_kind": "Kinetics-400 softmax; not a calibrated basketball-event probability",
+        "tennis_signals": signals,
+        "score_kind": "Kinetics-400 softmax; not a calibrated tennis-event probability",
         "source_model": "PyTorchVideo X3D-XS (Kinetics-400)",
         "model_version": "pytorchvideo hub main / X3D_XS.pyth",
         "visual_action_evidence": {"top5": top, "matched_label": primary["label"], "frame_timestamps": times},
         "hypecut_signal": {"sampling": source, "segment_score": segment.get("score") if segment else None, "reasons": segment.get("reasons") if segment else {}},
         "evidence_source": "LOCAL_X3D",
         "verification_status": "MODEL_PREDICTED",
-        "semantic_limit": "Generic Kinetics action evidence only; this does not verify a made/missed basket, steal, rebound, player, team, or possession.",
+        "semantic_limit": "Generic Kinetics action evidence only; this does not verify a point, score, player, winner, or rally outcome.",
         "time_localization_method": "1.6s X3D sample window",
     }
 
@@ -825,8 +802,7 @@ def _merge(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _fresh_cache(video_id: str) -> dict[str, Any] | None:
     # A cache is reusable only when it was produced by the current analysis
     # pipeline and the source file has not changed.  Legacy caches without
-    # a version are intentionally re-analysed so users see the improved
-    # basketball-class ranking instead of stale, misleading candidates.
+    # a version are intentionally re-analysed so users never see stale sport labels.
     cached = _json(OUT / f"latest_{video_id}.json", {})
     if cached.get("analysis_version") == ANALYSIS_VERSION and cached.get("source_fingerprint") == _fingerprint(VIDEO_IDS[video_id]):
         return cached
@@ -856,12 +832,10 @@ def _analyze_locked(video_id: str, progress: Any = None) -> dict[str, Any]:
     runner = get_x3d()
     raw, failures = [], []
     windows = _windows(video_id, info["duration"])
-    # Two passes share one progress bar: X3D windows ~35%, detector frames ~65%.
-    use_detector = shots.available()
-    x3d_share = 35 if use_detector else 100
+    x3d_share = 100
     for number, (start, sampling, segment) in enumerate(windows):
         if progress and number % 4 == 0:
-            progress(round(x3d_share * number / max(1, len(windows))), 100)
+            progress(round(100 * number / max(1, len(windows))), 100)
         try:
             frames, times = _frames(video, start)
             top = runner.classify(frames)
@@ -872,34 +846,6 @@ def _analyze_locked(video_id: str, progress: Any = None) -> dict[str, Any]:
             failures.append({"start_time": start, "error": type(exc).__name__})
     x3d_seconds = time.perf_counter() - started
     events = _merge(raw)
-    shot_list: list[dict[str, Any]] = []
-    roster: dict[str, Any] = {"players": [], "teams": False}
-    detector_error = None
-    if use_detector:
-        try:
-            rows = shots.scan(video_id, video, fingerprint,
-                              progress=(lambda d, t: progress(x3d_share + round((100 - x3d_share) * d / max(1, t)), 100)) if progress else None)
-            shot_list = shots.shot_events(video_id, rows, str(video.relative_to(ROOT)))
-            try:
-                from integrations import players as players_mod
-                roster = players_mod.analyse(rows)
-                for e in shot_list:
-                    who = roster["by_attempt"].get(f"{e['peak_time']:.2f}")
-                    if who:
-                        e["player"], e["team"] = who["player"], who["team"]
-                        e["player_via"] = who["how"]
-                roster.pop("by_attempt", None)
-            except Exception as exc:  # numbering is an extra; shots still stand
-                roster = {"players": [], "teams": False, "error": type(exc).__name__}
-        except Exception as exc:  # the detector is an upgrade; X3D results still stand
-            detector_error = type(exc).__name__
-    if shot_list:
-        # The detector localises shots better than 1.6 s X3D windows: drop X3D
-        # shot/dunk windows that overlap a detected attempt, keep the rest.
-        def near(e: dict[str, Any]) -> bool:
-            return any(float(e["start_time"]) <= s["end_time"] + 0.5 and float(e["end_time"]) >= s["start_time"] - 0.5 for s in shot_list)
-        events = sorted([e for e in events if e["event_type"] not in SHOT_LIKE_TYPES or not near(e)] + shot_list,
-                        key=lambda e: float(e["start_time"]))
     try:
         from integrations import highlight
         highlight.score(events, highlight.loudness(video, FFMPEG))
@@ -910,9 +856,9 @@ def _analyze_locked(video_id: str, progress: Any = None) -> dict[str, Any]:
         "schema_version": "1.1", "analysis_version": ANALYSIS_VERSION, "run_id": f"lw-{video_id}-{_now()}", "source_video_id": video_id,
         "source_video": str(video.relative_to(ROOT)), "source_fingerprint": fingerprint, "events": events,
         "event_summary": {kind: sum(1 for event in events if event["event_type"] == kind) for kind in sorted({event["event_type"] for event in events})},
-        "shooting": shots.summary(events) if use_detector else None,
-        "roster": roster,
-        "detector": {"available": use_detector, "error": detector_error, "sample_fps": shots.SAMPLE_FPS, "x3d_seconds": round(x3d_seconds, 3)},
+        "shooting": None,
+        "roster": {"players": [], "teams": False},
+        "detector": {"available": False, "reason": "Basketball rim detector is disabled for tennis", "x3d_seconds": round(x3d_seconds, 3)},
         "hypecut_only_baseline": {"candidate_count": len(_hype_segments(video_id)), "segments": _hype_segments(video_id)},
         "performance": {"device": str(runner.device), "model_load_seconds": runner.load_seconds, "gpu_memory_model_bytes": runner.memory_bytes,
                         "inference_total_seconds": round(elapsed, 3), "seconds_per_video_minute": round(elapsed / (info["duration"] / 60), 3),
@@ -1397,11 +1343,10 @@ def fit_clips_to_target(clips: list[dict[str, Any]], target: float, score_key: s
     return kept
 
 
-SCORING_WORDS =("投篮", "出手", "shot", "shoot", "扣篮", "灌篮", "得分", "进球")
-# Asking whether a shot went in.  The local model cannot answer that, so the
-# agent explains the limit instead of pretending.  "生成进球集锦" is *not* such a
-# question: it is a request for a shot reel.
-OUTCOME_QUESTION = re.compile(r"(进了吗|进没进|有没有进|是否(命中|进球|得分)|命中了吗|命中率|中了吗|投进了?(几|多少)|进了(几|多少)|made\?)")
+SCORING_WORDS =("发球", "击球", "回合", "网球", "serve", "tennis", "rally")
+# Point, set, and winner inference needs ball tracking and scoreboard OCR, neither
+# of which is part of this release.
+OUTCOME_QUESTION = re.compile(r"(得分|比分|谁赢|赢了吗|几比几|ace|破发)")
 HELP_WORDS = ("帮助", "怎么用", "能做什么", "功能", "使用说明")
 SEARCH_WORDS = ("找出", "查找", "搜索", "查看", "关键事件", "有哪些", "列出")
 RECAP_WORDS = ("解释", "复盘", "分析", "说明", "总结", "表现", "投得怎么样", "哪段时间", "什么时候")
@@ -1424,7 +1369,7 @@ def roster(video_id: str) -> dict[str, Any]:
     return r
 
 
-MADE_WORDS = ("只要进球", "只剪进球", "只留进球", "进球集锦", "进球的", "进了的", "命中的", "投进的", "只要进的", "made")
+MADE_WORDS: tuple[str, ...] = ()
 EXPORT_WORDS = ("导出", "下载", "保存")
 LENGTHEN_WORDS = ("延长", "加长", "拉长", "长一点", "长一些")
 SHORTEN_WORDS = ("缩短", "再短", "短一点", "短一些", "压缩")
@@ -1475,7 +1420,7 @@ def parse_intent(message: str, has_plan: bool) -> Intent:
         return Intent("help", **common)
     if OUTCOME_QUESTION.search(text):
         return Intent("outcome", **common)
-    if made_only or player is not None or all_players:  # "只要进球" / "3号的集锦" / "所有人": cut a new reel
+    if player is not None or all_players:  # player filtering is retained as a future extension
         return Intent("generate", **common)
 
     longer, shorter = has(LENGTHEN_WORDS), has(SHORTEN_WORDS)
@@ -1514,7 +1459,7 @@ def parse_intent(message: str, has_plan: bool) -> Intent:
 
 @dataclass
 class LightweightSession:
-    video_id: str = "cbf"
+    video_id: str = ""
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     candidate_version: str = "v1"
     plan: dict[str, Any] | None = None
@@ -1604,7 +1549,7 @@ class LightweightSession:
             "duration_clamped": meta["duration_clamped"],
             "duration_note": meta["duration_note"],
             "evidence_status": "MODEL_PREDICTED",
-            "note": "本地 X3D 只识别通用篮球动作，不确认进球、球员或回合归属。",
+            "note": "本地 X3D 只识别通用网球动作，不确认比分、得分、球员或回合归属。",
         }
         self.state = "PLAN_CREATED"; self._trace("create_highlight_plan", self.plan)
         (self.output_dir / "highlight_plan.json").write_text(json.dumps(self.plan, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1851,7 +1796,7 @@ class LightweightSession:
         """Execute a supported local command using state, rather than canned answers."""
         text = message.strip().lower()
         if not text:
-            return self._save("请输入一条命令，例如“生成 20 秒投篮高光”。", {})
+            return self._save("请输入一条命令，例如“生成 20 秒网球高光”。", {})
         try:
             if edit_style is not None:
                 self.edit_style = normalize_edit_style(edit_style)
@@ -1865,39 +1810,29 @@ class LightweightSession:
                 self.player = None
                 player_note = " 已改回所有人的集锦。"
             elif intent.player is not None and not is_hypecut:
-                numbers = [p["number"] for p in roster(self.video_id)["players"]]
-                if intent.player not in numbers:
-                    from integrations import players as players_mod
-                    if not players_mod.ENABLED:
-                        return self._save("按人剪辑（给每个球员编号）还在测试，暂时没有开放。现在可以剪全场集锦或“只要进球”。", {})
-                    if not numbers:
-                        return self._save("这段视频暂时分不清每个球员（比如镜头经常切换，或人太小），还不能按人剪。固定机位拍的整场比赛效果最好。", {})
-                    return self._save(f"没找到 {intent.player} 号。这场认出的出手球员有：" + "、".join(f"{n} 号" for n in numbers)
-                                      + "。号码是系统按出手次数编的，不是球衣号，打开「球员」可以看每个人的照片。", {})
-                self.player = intent.player
-                player_note = f" 只用了 {intent.player} 号的出手。"
+                return self._save("当前网球版暂不提供按球员筛选；可以按时间范围、节奏或片段数来剪。", {})
 
             if intent.action == "help":
                 return self._save(
                     "我可以帮你：\n"
-                    "• 生成 20 秒投篮高光\n"
+                    "• 生成 20 秒网球高光\n"
                     "• 做一个 30 秒精彩集锦\n"
-                    "• 找出所有疑似投篮/扣篮\n"
+                    "• 找出所有疑似发球/击球\n"
                     "• 缩短到 15 秒 / 延长到 30 秒 / 只保留 3 段\n"
                     "• 改成硬切 / 加慢放回看 / 不要字幕\n"
                     "• 加热血配乐 / 换一首 / 电影感 / 复古 / 黑白 / 加特效\n"
-                    "• 标题改成“街球之夜”\n"
-                    "• 去掉第 2 段 / 只保留第 1、3 段 / 第 2 段字幕改成“压哨三分”\n"
-                    "• 只要后半段 / 1:30 以后 / 最后 2 分钟 / 只要进球\n"
+                    "• 标题改成“球场之夜”\n"
+                    "• 去掉第 2 段 / 只保留第 1、3 段 / 第 2 段字幕改成“制胜回合”\n"
+                    "• 只要后半段 / 1:30 以后 / 最后 2 分钟\n"
                     "• 最精彩的放最后 / 按时间顺序 / 撤销\n"
                     "• 一句话说好几件事：“去掉第 2 段，节奏快一点，改成竖屏”\n"
-                    "• 分析一下这场 / 这场进了几个球 / 导出视频\n"
+                    "• 分析一下这场 / 找出发球镜头 / 导出视频\n"
                     "直接说你想做什么即可。",
                     {},
                 )
             if intent.action == "restyle" and not self.plan:
                 return self._save(
-                    f"已记下剪辑风格（{self._style_text()}），生成高光时会使用。试试说“生成 20 秒投篮高光”。",
+                    f"已记下剪辑风格（{self._style_text()}），生成高光时会使用。试试说“生成 20 秒网球高光”。",
                     {"edit_style": self.edit_style},
                 )
             if intent.action == "need_plan":
@@ -1908,7 +1843,7 @@ class LightweightSession:
                 from .edit_ops import did_you_mean
                 close = did_you_mean(message)
                 hint = ("你是想说：" + " / ".join(f"“{x}”" for x in close) + " 吗？") if close else \
-                    "试试说：“生成 20 秒投篮高光”“只要进球”“去掉第 2 段”“只要后半段”。"
+                    "试试说：“生成 20 秒网球高光”“找出发球镜头”“去掉第 2 段”“只要后半段”。"
                 return self._save(
                     "这句我没听懂。" + hint + "\n一句话里可以说好几件事，比如“去掉第 2 段，节奏快一点，最精彩的放最后”。",
                     {},
@@ -1962,47 +1897,19 @@ class LightweightSession:
             self._trace("get_video_info", {"video_id": self.video_id, "candidate_version": self.candidate_version, "events_available": len(items)})
 
             def matching(pool: list[dict[str, Any]]) -> list[dict[str, Any]]:
-                if self.player is not None and not is_hypecut:
-                    pool = [x for x in pool if x.get("player") == f"p{self.player}"]
-                if is_hypecut or not (intent.scoring or self.player is not None):
+                if is_hypecut or not intent.scoring:
                     return list(pool)
-                shots_only = [x for x in pool if x["event_type"] in SHOT_LIKE_TYPES]
-                if intent.made_only:
-                    made = [x for x in shots_only if x.get("outcome") == "made"]
-                    return made or shots_only
-                return shots_only
+                return [x for x in pool if x["event_type"] in SHOT_LIKE_TYPES]
 
             if intent.action == "outcome":
-                shot_items = [x for x in items if x["event_type"] in SHOT_LIKE_TYPES]
-                who = ""
-                if self.player is not None and intent.player is not None:
-                    shot_items = [x for x in shot_items if x.get("player") == f"p{self.player}"]
-                    who = f"{self.player} 号"
                 self.state = "EVENTS_RETRIEVED"
-                self._trace("search_events", {"event_type": "shot_attempt", "count": len(shot_items), "outcome_check": True})
-                if is_hypecut:
-                    return self._save("当前的“画面变化”方式只看镜头和声音的起伏，认不出投篮，也判断不了进没进。", {"events": []})
-                stats = shots.summary(shot_items)
-                if not stats["attempts"]:
-                    return self._save(
-                        f"这段视频里找到 {len(shot_items)} 个疑似投篮/扣篮的镜头，但篮筐拍得不够清楚，判断不了进没进。生成集锦后回看一下就清楚了。",
-                        {"events": shot_items},
-                    )
-                made = [x for x in shot_items if x.get("outcome") == "made"]
-                parts = [f"{who}找到 {stats['attempts']} 次出手，能看清结果的：进了 {stats['made']} 个、没进 {stats['missed']} 个"]
-                if stats["fg_pct"] is not None:
-                    parts.append(f"命中率约 {stats['fg_pct']}%")
-                if stats["unknown"]:
-                    parts.append(f"另有 {stats['unknown']} 次篮筐不在画面里，看不出结果")
-                text = "，".join(parts) + "。"
-                if made:
-                    text += " 进球在 " + "、".join(_clock(float(x["start_time"])) for x in made[:6]) + "。"
-                return self._save(text + " 结果是自动识别的，可能有误。", {"events": shot_items, "shooting": stats})
+                self._trace("search_events", {"event_type": "tennis_action_candidate", "count": len(items), "outcome_check": True})
+                return self._save("当前版本只定位疑似发球和击球镜头，不判断得分、比分、胜负或回合结果。请以原始比赛画面和记分牌为准。", {"events": matching(items)})
 
             if intent.action == "search":
                 found = matching(items)
                 self.state = "EVENTS_RETRIEVED"
-                self._trace("search_events", {"event_type": "shot_attempt" if intent.scoring and not is_hypecut else None, "count": len(found)})
+                self._trace("search_events", {"event_type": "tennis_hit" if intent.scoring and not is_hypecut else None, "count": len(found)})
                 if not found:
                     return self._save("没找到符合条件的镜头，可以试试“找出所有精彩动作”。", {"events": []})
                 ranked = sorted(found, key=self._score, reverse=True)[:3]
@@ -2010,7 +1917,7 @@ class LightweightSession:
                     f"{float(x['start_time']):.1f}s {x.get('display_name') or EVENT_TYPE_ZH.get(x['event_type'], x['event_type'])}"
                     for x in ranked
                 )
-                kind = "投篮/扣篮" if intent.scoring and not is_hypecut else "篮球动作"
+                kind = "发球/击球" if intent.scoring and not is_hypecut else "网球动作"
                 return self._save(
                     f"找到 {len(found)} 个{kind}镜头，最值得先看：{preview}。这些是自动识别的，可能有误差。",
                     {"events": found},
@@ -2037,7 +1944,7 @@ class LightweightSession:
                         name = clip.get("label") or clip.get("display_name") or EVENT_TYPE_ZH.get(clip.get("event_type", ""), "动作")
                         out = clip.get("output_duration") or (float(clip["end_time"]) - float(clip["start_time"]))
                         lines.append(f"{index}. {name}，原片 {float(clip['start_time']):.1f}–{float(clip['end_time']):.1f}s，成片约 {float(out):.1f}s")
-                    summary = "当前集锦包含：" + "；".join(lines) + "。动作是自动识别的，进没进球、是谁投的需要你回看确认。"
+                    summary = "当前集锦包含：" + "；".join(lines) + "。动作是自动识别的，得分、比分和球员信息需要你回看确认。"
                 else:
                     top = sorted(items, key=self._score, reverse=True)[:5]
                     summary = (
@@ -2047,7 +1954,7 @@ class LightweightSession:
                             for x in top
                         )
                         + "。先生成高光可以进一步筛选。"
-                    ) if top else "这段视频里暂时没认出篮球动作。"
+                    ) if top else "这段视频里暂时没认出网球动作。"
                 recap = {"source_video_id": self.video_id, "events": self.plan["clips"] if self.plan else [],
                          "verification_status": "MODEL_PREDICTED", "summary": summary}
                 self._trace("generate_recap", recap)
@@ -2059,17 +1966,11 @@ class LightweightSession:
                 self.excluded, self.time_range, self.order, self.captions = set(), (None, None), None, {}
             selected = matching(items)
             fallback_note = ""
-            if intent.made_only and not is_hypecut:
-                made_n = sum(1 for x in selected if x.get("outcome") == "made")
-                if not made_n:
-                    fallback_note = " 这段视频没检测到进球（篮筐不在画面里时判断不了），先用投篮镜头代替。"
-            if not selected and self.player is not None:
-                return self._save(f"{self.player} 号在这段里没有可用的出手镜头。说“所有人”可以改回全场集锦。", {})
             if not selected:
                 if not items:
-                    return self._save("这段视频里暂时没认出篮球动作，生成不了集锦，换一段视频试试吧。", {"failure": {"stage": "NO_CANDIDATES", "retryable": True}})
+                    return self._save("这段视频里暂时没认出网球动作，生成不了集锦，换一段机位更稳定的网球视频试试吧。", {"failure": {"stage": "NO_CANDIDATES", "retryable": True}})
                 selected = list(items)
-                fallback_note = " 投篮镜头不够多，已经用上了所有精彩动作。"
+                fallback_note = " 发球或击球候选不够多，已经用上了所有精彩动作。"
             # A fresh request resets "保留 N 段" unless it states a count itself.
             self.clip_count = intent.clip_count
             meta = clamp_meta(duration if duration is not None else 20.0)
@@ -2083,7 +1984,7 @@ class LightweightSession:
                 reply = (
                     f"已按画面变化剪好 {output['duration']:.1f} 秒集锦，共 {len(plays)} 个片段"
                     f"（{self._style_text(plan)}）。"
-                    "这种方式挑的是镜头最热闹的地方，不一定是投篮。"
+                    "这种方式挑的是镜头最热闹的地方，不一定是网球动作。"
                 )
             else:
                 reply = (
@@ -2091,10 +1992,6 @@ class LightweightSession:
                     + (f"（{summary}）" if summary else "")
                     + f"。剪辑风格：{self._style_text(plan)}。"
                 )
-            if any(word in text for word in ("进球", "得分", "命中")) and not is_hypecut:
-                made = sum(1 for c in plays if c.get("outcome") == "made")
-                reply += (f" 其中 {made} 段是检测到的进球。" if made else
-                          " 这次没检测到进球（篮筐不在画面里时判断不了），挑的是投篮和扣篮镜头。")
             return self._save(reply + note + fallback_note + player_note, {"plan": plan, "output": output})
         except Exception as exc:
             failure = {"stage": self.state, "error_type": type(exc).__name__, "message": str(exc), "retryable": isinstance(exc, (RuntimeError, OSError, subprocess.SubprocessError))}

@@ -13,10 +13,10 @@
 <link rel="manifest" href="/app/manifest.json">
 <link rel="apple-touch-icon" href="/app/icons/apple-touch-icon.png">
 <script src="/app/theme.js"></script>
-<title>MoTrack 篮球集锦</title>
-<meta name="description" content="上传一段篮球比赛，自动挑出投篮和进球，几秒剪成带配乐的集锦，还能看比赛复盘。">
-<meta property="og:title" content="MoTrack 篮球集锦">
-<meta property="og:description" content="上传比赛视频，自动剪出进球集锦和赛后复盘。">
+<title>MoTrack 网球集锦</title>
+<meta name="description" content="上传一段网球比赛，自动挑出发球、击球和精彩回合，剪成带配乐的集锦。">
+<meta property="og:title" content="MoTrack 网球集锦">
+<meta property="og:description" content="上传网球比赛视频，自动剪出精彩集锦。">
 <meta property="og:image" content="/app/icons/icon-512.png">
 <link rel="stylesheet" href="app.css">
 </head>
@@ -67,7 +67,7 @@
       </div>
     </div>
     <div class="moments-card">
-      <div class="row-head"><h3>✨ 精彩瞬间</h3><span id="momentsNote">点一下在原片里看</span><button class="review-btn" id="reviewBtn" type="button">📊 比赛复盘</button></div>
+      <div class="row-head"><h3>✨ 精彩瞬间</h3><span id="momentsNote">点一下在原片里看</span></div>
       <div class="shoot-stats hidden" id="shootStats"></div>
       <div class="moments" id="moments" data-scroller data-hint="左右滑动看更多精彩瞬间"></div>
     </div>
@@ -83,7 +83,7 @@
           <div class="label">剪辑方式</div>
           <div class="modes">
             <button class="mode active" data-mode="lightweight" type="button"><b>基础剪辑 <i class="tag free">免费</i></b><span>自动挑镜头，按设置剪好</span></button>
-            <button class="mode vip" data-mode="ai" type="button"><b>AI 剪辑师 <i class="tag vip">VIP</i></b><span>看画面挑镜头，写解说</span><i class="lock" id="aiLock">🔒</i></button>
+            <button class="mode vip hidden" data-mode="ai" type="button"><b>AI 剪辑师 <i class="tag vip">VIP</i></b><span>网球版适配中</span><i class="lock" id="aiLock">🔒</i></button>
           </div>
           <div class="quota hidden" id="quota"></div>
         </div>
@@ -101,7 +101,7 @@
           <div><div class="label">画幅</div>
             <div class="seg-group" id="aspect"><button class="active" data-value="16:9" type="button">▭ 横屏</button><button data-value="9:16" type="button" title="适合抖音、视频号，画面会跟着动作裁切">▯ 竖屏</button></div></div>
           <div><div class="label">内容</div>
-            <div class="seg-group" id="focus"><button data-value="made" type="button" title="只放检测到进了的球">只要进球</button><button class="active" data-value="shots" type="button">投篮扣篮</button><button data-value="all" type="button">全部精彩</button></div></div>
+            <div class="seg-group" id="focus"><button data-value="serve" type="button">发球与击球</button><button class="active" data-value="rally" type="button">精彩回合</button><button data-value="all" type="button">全部精彩</button></div></div>
         </div>
         <details class="more" id="more">
           <summary>细节调整</summary>
@@ -153,7 +153,7 @@
 
 <footer class="foot">
   基础剪辑全程在你的电脑上完成，视频不会上传。AI 剪辑师会把候选片段的文字信息和少量截图发给 AI 服务，用来挑镜头和写解说，不会上传整段视频。<br>
-  动作和进没进都是自动识别的，可能有误差；篮筐不在画面里时不会判断结果。
+  动作是自动识别的，可能有误差；当前版本不判断得分、比分、胜负或回合结果，请以原始比赛画面为准。
 </footer>
 
 <div class="overlay hidden" id="vipDialog" role="dialog" aria-modal="true" aria-labelledby="vipTitle">
